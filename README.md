@@ -147,8 +147,7 @@ mesh[1].weights = read_weights_4_to_7;
 
 Rintintin performs **no memory allocation**. You provide all buffers:
 
-- **Processing buffer**: Use `calloc()` - must be zero-initialized
-- **Tensor buffer**: Use `malloc()` - zero-initialization not required  
+- **Tensor buffer**: Use `malloc()` - zero-initialization not required
 - **Scratch space**: Use `malloc()` - temporary working memory
 
 ## Error Handling
