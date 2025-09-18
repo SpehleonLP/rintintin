@@ -23,7 +23,7 @@ I have a ring where each jiggle bone controls one face and the middle has no ver
 
 How about a little more?
 
-![Iso](images/fractal-wheel-img1.webp) ![Iso](images/fractal-wheel-img2.webp)
+![Iso](images/fractal-wheel-img1.webp) ![Iso](images/fractal-wheel-img2.png)
 
 It’s O(tris+bones). I do no mesh modification or segmentation to keep it fast. It can churn though 500k tri meshes in 1 second.
 
