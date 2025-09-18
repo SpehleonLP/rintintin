@@ -219,9 +219,11 @@ Transform results to your desired coordinate system after computation.
 
 ## Limitations
 
-If the bone placement is bad then rintintin will run into difficulties. Hypothetically its possible to fix this--I can get all of those test cases to work while passing nullptr for the bone transforms. However: the heuristics aren't particularly good, and doing this robustly requires solving a quartic with nested radicals--which as far as I can tell is impossible, and newton's method fails because it is too flat. 
+- If the bone placement is bad then rintintin will run into difficulties. Hypothetically its possible to fix this--I can get all of those test cases to work while passing nullptr for the bone transforms. However: the heuristics aren't particularly good, and doing this robustly requires solving a quartic with nested radicals--which as far as I can tell is impossible, and newton's method fails because it is too flat. 
 
-For the most part rintintin will produce reasonable results for reasonable assets, that is assets with limited non-manifold issues e.g. eye holes. However if it gets too non-manifold then problems appear, as in here with the mantis, where a double sided face is used for the wings instead of a proper mesh; rintintin can deal with this--if it knows the part of the mesh should be considered a thin shell, but if I don't tell it that...
+- It will have a problem if the armature has more than one bone with no parents, that is multiple roots. 
+
+- For the most part rintintin will produce reasonable results for reasonable assets, that is assets with limited non-manifold issues e.g. eye holes. However if it gets too non-manifold then problems appear, as in here with the mantis, where a double sided face is used for the wings instead of a proper mesh; rintintin can deal with this--if it knows the part of the mesh should be considered a thin shell, but if I don't tell it that...
 
 ![Iso](images/mantis.webp)
 
