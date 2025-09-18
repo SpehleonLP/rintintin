@@ -275,14 +275,14 @@ static int rintintin_build_subtree(rintintin_command * cmd, struct Memo * memo)
 				memo->subtree[p] = rintintin_tensor_add(&memo->subtree[p], &memo->subtree[j]); 
 		}
 	}
-/*
+
 	for(uint32_t idx = 0; idx < N; ++idx) 
 	{ 
 		latent_t * latent_j = &scratch->latent[idx];		
 		
 		if(latent_j->thin[THIN_MASS] != 0.0)
 			rintintin_add_thin_shell(&memo->subtree[idx] , latent_j->thin);
-	}*/
+	}
 
 	return RINTINTIN_SUCCESS;
 }
