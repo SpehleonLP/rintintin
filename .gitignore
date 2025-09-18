@@ -1,5 +1,12 @@
+# debug files
+src/rintintin_debug_out.h
+src/rintintin_debug_out.c
+CMakeLists.txt.user
+build/*
+
 # Prerequisites
 *.d
+*.user
 
 # Object files
 *.o
