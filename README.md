@@ -1,11 +1,13 @@
 
 # Rintintin
 
-A zero-dependency C library for computing mass properties and inertia tensors of skinned 3D meshes.
+A zero-dependency C library for computing colliders, mass properties, and inertia tensors of every bone of a skinned mesh individually.
 
 ## Overview
 
-Rintintin solves the generalized rigid body problem for skinned meshes, as seen here it computed the masses, centroids and moments of inertia for each bone individually and displayed them as ellipsoids. You can see the animal then the auto-generated rigid-body set for the animal.
+Rintintin solves the generalized rigid body problem for skinned meshes. Functionally: nth order mass tensors are undefined for non-manifold objects. I created a definition, and my evidence that my definition is correct is that rintintin works. 
+
+As seen here it computed the masses, centroids and moments of inertia for each bone individually and displayed them as ellipsoids. You can see the animal then the auto-generated rigid-body set for the animal.
 
 ![Top](images/top-view.webp) ![Side](images/side-view.webp) ![Iso](images/isometric-view.webp)
 
@@ -37,6 +39,12 @@ This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)**
 The GPL-2.0 ensures that any modifications or derivative works must also be made available under the same open source license, preserving the open nature of the project for the community.
 
 For the full license text, see the [LICENSE](LICENSE) file in this repository or visit [gnu.org/licenses/gpl-2.0.html](https://www.gnu.org/licenses/gpl-2.0.html).
+
+### For Indies:
+- consider making a blender plugin so you can export tensors to your game.
+
+### For enterprise tooling:
+- contact me for details about purchasing whitepaper: spehleon (plus) rintintin (at) gmail (dot) com 
 
 ### Key Features
 

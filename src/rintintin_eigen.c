@@ -225,12 +225,32 @@ rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I) {
             matrixScale += fabs(getElement(A, i, j));
         }
     }
+    
+    if(matrixScale == 0.0)
+    {
+		return (rintintin_eigen)
+		{
+			.vectors = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+			.values = {0, 0, 0}
+		};
+    }
+    
     matrixScale /= 9.0; // Average absolute value of matrix elements
     
+	// Scale matrix up to reasonable range
+	double scale_factor = 1.0;
+	if (matrixScale < 1e-6) {  // or whatever threshold makes sense
+		scale_factor = 1e6 / matrixScale;  // bring into ~1.0 range
+	}
+
+	for(int i = 0; i < 9; ++i)		
+		A[i/3][i%3] *= scale_factor;
+
     // Adaptive tolerance: scale with matrix magnitude, but keep reasonable bounds
-    double tolerance = fmax(1e-15, fmin(1e-6, matrixScale * 1e-12));
+    double tolerance = fmax(1e-12, fmin(1e-6, matrixScale * scale_factor * 1e-6));
   
-    for (int iter = 0; iter < maxIterations; iter++) {
+	int iter = 0;
+    for (iter = 0; iter < maxIterations; iter++) {
         int p = 0, q = 1;
         double maxOffDiag = 0.0;
         
@@ -283,7 +303,7 @@ rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I) {
     
     rintintin_eigen result;
     for (int i = 0; i < 3; i++) {
-        result.values[i] = getElement(A, i, i);
+        result.values[i] = getElement(A, i, i) / scale_factor;
         result.vectors[i].x = getElement(V, 0, i);
         result.vectors[i].y = getElement(V, 1, i);
         result.vectors[i].z = getElement(V, 2, i);
@@ -347,8 +367,14 @@ rintintin_error_code rintintin_estimate_shapes(rintintin_inertia_estimation * ds
         int best_axis = 2;
         (void)best_axis;
         
+        if(mass == 0)
+        {
+            dst[i].scale = (rintintin_vec3){0.0001, 0.0001, 0.0001};
+            continue;            
+        }
+        
         // Avoid division by zero
-        if (mass < 1e-12 || lambda_large < 1e-12) {
+        if (mass < 1e-30 || lambda_large < 1e-30) {
             dst[i].scale = (rintintin_vec3){0.01, 0.01, 0.01};
             continue;
         }

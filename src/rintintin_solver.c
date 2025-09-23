@@ -261,6 +261,11 @@ static int rintintin_build_subtree(rintintin_command * cmd, struct Memo * memo)
 	{
 		latent_t * latent_j = &scratch->latent[idx];		
 		i_func[idx] = rintintin_tensor_from_coeff(latent_j->thick);
+		
+		if(latent_j->thin[THIN_MASS] != 0.0)
+		{
+			rintintin_add_thin_shell(&i_func[idx] , latent_j->thin);
+		}
 	}	
 	
 	{
@@ -276,13 +281,6 @@ static int rintintin_build_subtree(rintintin_command * cmd, struct Memo * memo)
 		}
 	}
 
-	for(uint32_t idx = 0; idx < N; ++idx) 
-	{ 
-		latent_t * latent_j = &scratch->latent[idx];		
-		
-		if(latent_j->thin[THIN_MASS] != 0.0)
-			rintintin_add_thin_shell(&memo->subtree[idx] , latent_j->thin);
-	}
 
 	return RINTINTIN_SUCCESS;
 }
