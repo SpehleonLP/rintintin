@@ -177,6 +177,10 @@ typedef struct rintintin_metrics {
     double volume;                      ///< Volume of geometry influenced by this joint
     rintintin_vec3 centroid;            ///< Center of mass in mesh space
     rintintin_symmetric_mat3 inertia;   ///< Inertia tensor about the centroid 
+    rintintin_vec3 covariance;			 ///< Diagonal of covariance matrix (off diaginal is same as tensor)
+    
+    rintintin_vec3 aabb_min;
+    rintintin_vec3 aabb_max;
 } rintintin_metrics;
 	
 

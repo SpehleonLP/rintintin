@@ -15,6 +15,7 @@ dvec3 rintintin_mat3x3_T_mul_vec(const rintintin_mat3x3* mat, const rintintin_ve
 #include <assert.h>
 #else
 #define LOG(...)
+#define assert(x)
 #endif
 
 // don't include *anything*

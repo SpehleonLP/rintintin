@@ -158,14 +158,7 @@ static rintintin_eigen rintintin_sort_eigen(rintintin_eigen * in)
 	_max = in->values[_max] > in->values[2]? _max : 2;
 	//the three indices must sum to 0+1+2=3.
 	int _mid = 3 - _min - _max;
-	
-	if(_mid == -1)
-	{
-		int break_point = 0;
-		--break_point;
-	
-	}
-	
+		
 	rintintin_eigen r = {
 		.values={in->values[_min], in->values[_mid], in->values[_max]},
 		.vectors={in->vectors[_min], in->vectors[_mid], in->vectors[_max]},

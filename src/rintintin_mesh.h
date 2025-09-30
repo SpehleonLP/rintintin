@@ -1,6 +1,7 @@
 #ifndef RINTINTIN_MESH_H
 #define RINTINTIN_MESH_H
 #include "../include/rintintin.h"
+#include <stddef.h>
 
 
 struct rintintin_vertex

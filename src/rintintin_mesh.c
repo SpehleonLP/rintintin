@@ -359,13 +359,7 @@ rintintin_error_code rintintin_process_mesh(rintintin_mesh const* src, uint32_t 
 			va = 1;
 			vb = 0;
 		}
-		
-		if(i == 21)
-		{
-			int break_point = 0;
-			++break_point;
-		}
-	
+			
 		int w[3] = {va, vb, 2};
 		rintintin_vec3 p[3];
 		p[0].x = tri.position[va][0];
