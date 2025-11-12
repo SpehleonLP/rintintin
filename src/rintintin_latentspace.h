@@ -31,6 +31,7 @@ struct rintintin_latent_space
 {
 	double thick[58];
 	double thin[10];
+	double surfaceArea;
 };
 
 // Predefined structs

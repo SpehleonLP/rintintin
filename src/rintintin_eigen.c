@@ -1,3 +1,4 @@
+#include "rintintin_mesh.h"
 #define USING_NAMESPACE_RINTINTIN 1
 #define RINTINTIN_USE_MATH_H 0
 #include "rintintin_eigen.h"
@@ -234,6 +235,10 @@ rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I) {
 	double scale_factor = 1.0;
 	if (matrixScale < 1e-6) {  // or whatever threshold makes sense
 		scale_factor = 1e6 / matrixScale;  // bring into ~1.0 range
+	}
+	if(matrixScale > 10.0)
+	{
+		scale_factor = 10.0 / matrixScale;
 	}
 
 	for(int i = 0; i < 9; ++i)		
@@ -653,4 +658,116 @@ rintintin_matrix_classification rintintin_sym_mat3_classify(rintintin_symmetric_
     
     // If none of the above, matrix is indefinite
     return 0;
+}
+
+
+static rintintin_error_code rintintin_oriented_bounding_box_cb(struct rintintin_vertex const* vert, void * user_data)
+{
+	struct rintintin_bounding_box_command * cmd =  ((struct rintintin_bounding_box_command*)user_data);
+	
+	for(int i = 0; i < 4; ++i)
+	{
+		if(vert->joint[i] >= 0
+		&& (&vert->weight.x)[i] > 0)
+		{
+			int j = vert->joint[i];
+			
+			rintintin_inertia_estimation* obb = &cmd->result[j];
+			
+			// 1. Center around centroid
+			rintintin_vec3 centered = vec3_sub((dvec3*)&vert->position, &cmd->metrics[j].centroid);
+			rintintin_vec3 local = rintintin_quat_conjugate_mul_vec3(&obb->rotation, &centered);
+    
+			// Update min/max in oriented space (using scale/translation as temporary storage)
+			obb->scale.x = (local.x < obb->scale.x) ? local.x : obb->scale.x;
+			obb->scale.y = (local.y < obb->scale.y) ? local.y : obb->scale.y;
+			obb->scale.z = (local.z < obb->scale.z) ? local.z : obb->scale.z;
+			
+			obb->translation.x = (local.x > obb->translation.x) ? local.x : obb->translation.x;
+			obb->translation.y = (local.y > obb->translation.y) ? local.y : obb->translation.y;
+			obb->translation.z = (local.z > obb->translation.z) ? local.z : obb->translation.z;
+		}
+	}
+
+	return RINTINTIN_SUCCESS;
+}
+	
+/// get oriented bounding boxes. 
+rintintin_error_code rintintin_oriented_bounding_boxes(struct rintintin_bounding_box_command * cmd)
+{
+	if(cmd == 0L
+	|| cmd->meshes == 0L
+	|| cmd->metrics == 0L
+	|| cmd->result == 0L)
+		return RINTINTIN_ERROR_NULL_POINTER;
+		
+	if(cmd->result_byte_length != sizeof(*cmd->result) * cmd->no_joints)
+		return RINTINTIN_ERROR_INVALID_ARGUMENT;
+		
+    // Process each joint
+    for(uint32_t i = 0u; i < cmd->no_joints; ++i)
+    {
+        rintintin_metrics const* metrics = &cmd->metrics[i];
+        rintintin_inertia_estimation* obb = &cmd->result[i];
+        
+        smat3 covariance =
+        {
+			.xx=metrics->covariance.x,
+			.yy=metrics->covariance.y,
+			.zz=metrics->covariance.z,
+			
+			.xy=metrics->inertia.xy,
+			.xz=metrics->inertia.xz,
+			.yz=metrics->inertia.yz,
+		};
+        
+        // Compute eigendecomposition of inertia tensor (or covariance matrix)
+        rintintin_eigen eigen = rintintin_compute_eigen(&covariance);
+        
+        // Create rotation matrix from eigenvectors (principal axes)
+        rintintin_mat3x3 rot_matrix;
+        rintintin_compute_rotation_3x3(&rot_matrix, &eigen);
+                
+        obb->scale = (dvec3){1e200, 1e200, 1e200};      // min
+        obb->translation = (dvec3){-1e200, -1e200, -1e200}; // max (temporary)
+        obb->rotation = rintintin_quat_from_3x3(&rot_matrix);
+    }
+            
+	// Visit all vertices for this joint
+	for(uint64_t mesh_idx = 0; mesh_idx < cmd->no_meshes; ++mesh_idx)
+	{
+		int ec = rintintin_visit_each_index(&cmd->meshes[mesh_idx], 0, 1, 
+										   rintintin_oriented_bounding_box_cb, cmd);
+		
+		if(ec != RINTINTIN_SUCCESS)
+			return ec;
+	}
+	
+    // Process each joint
+    for(uint32_t i = 0u; i < cmd->no_joints; ++i)
+    { 
+        rintintin_inertia_estimation* obb = &cmd->result[i];
+        rintintin_metrics const* metrics = &cmd->metrics[i];
+        
+        // Extract min/max from temporary storage
+        dvec3 local_min = obb->scale;
+        dvec3 local_max = obb->translation;
+        
+        if(obb->scale.x < obb->translation.x)
+        {
+			// Compute half-extents (scale) in oriented space
+			obb->scale.x = (local_max.x - local_min.x) * 0.5;
+			obb->scale.y = (local_max.y - local_min.y) * 0.5;
+			obb->scale.z = (local_max.z - local_min.z) * 0.5;
+        }
+        else
+        {
+			obb->scale = (dvec3){0, 0, 0};
+        }
+        
+        // Restore centroid (center of OBB in world space)
+        obb->translation = metrics->centroid;
+    }
+    
+    return RINTINTIN_SUCCESS;
 }

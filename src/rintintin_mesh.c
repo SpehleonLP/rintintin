@@ -121,140 +121,6 @@ static rintintin_error_code rintintin_get_indices(uint64_t * vertex_indices, con
     return RINTINTIN_SUCCESS;
 }
 
-static rintintin_error_code rintintin_get_visit_list(uint64_t * vertex_indices, const rintintin_mesh* src, uint64_t tri_id)
-{
-	int length = 0;
-
-    switch (src->geometry_type) {
-        case RINTINTIN_TRIANGLES: {
-            // Simple case: each triangle uses 3 consecutive indices
-           uint64_t base_index = tri_id * 3;
-            if (base_index + 2 >= src->no_indices) {
-                return RINTINTIN_ERROR_OUT_OF_BOUNDS;
-            }
-            
-            
-            if (src->index_array_buffer == 0L) {
-                // Non-indexed geometry
-                vertex_indices[0] = base_index;
-                vertex_indices[1] = base_index + 1;
-                vertex_indices[2] = base_index + 2;
-                break;
-            }    
-            
-            uint64_t tmp[3];
-            uint64_t cpy[3] = {vertex_indices[0], vertex_indices[1], vertex_indices[2]};
-		
-			// Indexed geometry
-			tmp[0] = read_index(src->index_array_buffer, src->index_type, base_index);
-			tmp[1] = read_index(src->index_array_buffer, src->index_type, base_index + 1);
-			tmp[2] = read_index(src->index_array_buffer, src->index_type, base_index + 2);
-			
-// likely to read things with shared vertes so try to remove redundancy. 
-			length = 0;
-			
-			for(int i = 0; i < 3; ++i)
-			{
-				int found = 0;
-			
-				for(int j = 0; j < 3; ++j)
-				{
-					if(cpy[j] == tmp[i])
-					{
-						found = 1;
-						break;
-					}
-				}
-				
-				if(!found)
-					vertex_indices[length++] = tmp[i];
-			}
-
-            break;
-        }
-        
-        case RINTINTIN_TRIANGLE_STRIP: {
-            // Triangle strip: triangles share vertices
-            // Triangle 0: vertices 0,1,2
-            // Triangle 1: vertices 1,2,3 (or 1,3,2 for correct winding)
-            // Triangle 2: vertices 2,3,4
-            // etc.
-            uint64_t base_index = tri_id;
-            if (base_index + 2 >= src->no_indices) {
-                return RINTINTIN_ERROR_OUT_OF_BOUNDS;
-            }
-             
-            length = 1;
-            
-            if (src->index_array_buffer) {
-                vertex_indices[0] = read_index(src->index_array_buffer, src->index_type, base_index + 2);
-            } else {
-                vertex_indices[0] = base_index + 2;
-            }
-            
-            if(tri_id == 0)
-            {
-				length = 3;
-				
-				if (src->index_array_buffer) {
-					vertex_indices[1] = read_index(src->index_array_buffer, src->index_type, base_index + 1);
-					vertex_indices[2] = read_index(src->index_array_buffer, src->index_type, base_index);
-				} else {
-					vertex_indices[1] = base_index + 1;
-					vertex_indices[2] = base_index;
-				}				
-            }
-            
-            break;
-        }
-        
-        case RINTINTIN_TRIANGLE_FAN: {
-            // Triangle fan: all triangles share the first vertex
-            // Triangle 0: vertices 0,1,2
-            // Triangle 1: vertices 0,2,3
-            // Triangle 2: vertices 0,3,4
-            // etc.
-            if (tri_id + 2 >= src->no_indices) {
-                return RINTINTIN_ERROR_OUT_OF_BOUNDS;
-            }
-               
-            length = 1;
-            
-            if (src->index_array_buffer) {
-                vertex_indices[0] = read_index(src->index_array_buffer, src->index_type, tri_id + 2);
-            } else {
-                vertex_indices[0] = tri_id + 2;
-            }
-            
-            if(tri_id == 0)
-            {
-				length = 3;
-				
-				if (src->index_array_buffer) {
-					vertex_indices[1] = read_index(src->index_array_buffer, src->index_type, tri_id + 1);
-					vertex_indices[2] = read_index(src->index_array_buffer, src->index_type, 0);
-				} else {
-					vertex_indices[1] = tri_id + 1;
-					vertex_indices[2] = 0;
-				}				
-            }
-         
-            break;
-        }
-        
-        default:
-            return RINTINTIN_ERROR_INVALID_TYPE;
-    }
-    
-    // Validate vertex indices
-    for (int i = 0; i < length; i++) {
-        if (vertex_indices[i] >= src->no_verts) {
-            return RINTINTIN_ERROR_OUT_OF_BOUNDS;
-        }
-    }
-    
-    return length;
-}
 
 static rintintin_error_code rintintin_get_tri(rintintin_tri* dst, const rintintin_mesh* src, uint64_t tri_id) 
 { 			
@@ -432,51 +298,44 @@ rintintin_error_code rintintin_visit_each_index(rintintin_mesh const* src, uint3
 	|| src->weights == 0 || src->weights_user_data == 0) 
 		return RINTINTIN_ERROR_NULL_POINTER;
 		
-	uint64_t N = rintintin_get_triangle_count(src);
+	uint64_t N = src->index_array_buffer? src->no_indices : src->no_verts;
 	uint64_t begin = (thread_id * N) / no_threads;
 	uint64_t end = ((thread_id+1) * N) / no_threads;
 	
 	for(uint64_t i = begin; i < end; ++i)
 	{
-		uint64_t vertex_indices[3] = {(uint64_t)(-1ll), (uint64_t)(-1ll), (uint64_t)(-1ll)};
-		int length = rintintin_get_visit_list(vertex_indices, src, i);
+		uint32_t v = src->index_array_buffer? read_index(src->index_array_buffer, src->index_type, i) : i;
 		
 		struct rintintin_vertex vertex = {0};
 		rintintin_error_code err;
+			
+		double * tmp_weights = &vertex.weight.x;
+	
+		err = src->position(&vertex.position.x, v, src->position_user_data);
+		if(err != RINTINTIN_SUCCESS) return err;
 		
-		if(length < 0)
-			return length;
+		err = src->joints(&vertex.joint[0], v, src->joints_user_data);
+		if(err != RINTINTIN_SUCCESS) return err;
 		
-		for (int vert = 0; vert < length; vert++) 
-		{		
-			double * tmp_weights = &vertex.weight.x;
+		err = src->weights(&vertex.weight.x, v, src->weights_user_data);
+		if(err != RINTINTIN_SUCCESS) return err;
 		
-			err = src->position(&vertex.position.x, (uint32_t)vertex_indices[vert], src->position_user_data);
-			if(err != RINTINTIN_SUCCESS) return err;
-			
-			err = src->joints(&vertex.joint[0], (uint32_t)vertex_indices[vert], src->joints_user_data);
-			if(err != RINTINTIN_SUCCESS) return err;
-			
-			err = src->weights(&vertex.weight.x, (uint32_t)vertex_indices[vert], src->weights_user_data);
-			if(err != RINTINTIN_SUCCESS) return err;
-			
-		// normalize weights.		
-			double sum = tmp_weights[0] + tmp_weights[1] + tmp_weights[2] + tmp_weights[3];
-			
-			if(sum > 1.0)
-			{
-				double invSum = 1.0 / sum;
-			
-				for (int i = 0; i < 4; i++) {
-					tmp_weights[i] = (float)(tmp_weights[i] * invSum);
-				}
+	// normalize weights.		
+		double sum = tmp_weights[0] + tmp_weights[1] + tmp_weights[2] + tmp_weights[3];
+		
+		if(sum > 1.0)
+		{
+			double invSum = 1.0 / sum;
+		
+			for (int i = 0; i < 4; i++) {
+				tmp_weights[i] = (float)(tmp_weights[i] * invSum);
 			}
-			
-			err = cb(&vertex, userdata);
-			
-			if(err != RINTINTIN_SUCCESS)
-				return err;
 		}
+		
+		err = cb(&vertex, userdata);
+		
+		if(err != RINTINTIN_SUCCESS)
+			return err;
 	}
 	
 	return RINTINTIN_SUCCESS;

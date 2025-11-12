@@ -228,9 +228,6 @@ rintintin_error_code rintintin_read_attrib_generic_i(int32_t * dst, uint32_t ind
     // Initialize output
     for (int i = 0; i < 4; i++) { dst[i] = 0; }
     
-    // Initialize output to 0
-    for (int i = 0; i < 4; i++) { dst[i] = 0.0; }
-    
 	switch (layout->type) {
         default:
             return RINTINTIN_ERROR_INVALID_TYPE;

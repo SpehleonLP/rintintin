@@ -175,6 +175,7 @@ typedef union rintintin_mat3x3 {
  */
 typedef struct rintintin_metrics {	 
     double volume;                      ///< Volume of geometry influenced by this joint
+    double surfaceArea;					 ///< Surface area of geometry influenced by this joint.
     rintintin_vec3 centroid;            ///< Center of mass in mesh space
     rintintin_symmetric_mat3 inertia;   ///< Inertia tensor about the centroid 
     rintintin_vec3 covariance;			 ///< Diagonal of covariance matrix (off diaginal is same as tensor)
@@ -335,12 +336,12 @@ RINTINTIN_API rintintin_error_code rintintin_end(rintintin_command * cmd);
  * how to interpret packed vertex attribute data.
  */
 typedef struct rintintin_attrib {
-    void* src;                        ///< Pointer to attribute data
-    uint64_t byte_length;   ///< Total size of data buffer
-    rintintin_type type;              ///< Data type of components
-    uint8_t size;               ///< Number of components (1-4)
-    uint8_t normalized;         ///< Whether to normalize fixed-point data to [0,1] or [-1,1]
-    uint16_t stride;            ///< Byte offset between consecutive attributes
+    void* src;                    ///< Pointer to attribute data
+    uint64_t byte_length;         ///< Total size of data buffer
+    rintintin_type type;          ///< Data type of components
+    uint8_t size;                 ///< Number of components (1-4)
+    uint8_t normalized;           ///< Whether to normalize fixed-point data to [0,1] or [-1,1]
+    uint16_t stride;              ///< Byte offset between consecutive attributes
     uint32_t offset;              ///< Initial byte offset in buffer
 } rintintin_attrib;
 
@@ -375,7 +376,6 @@ RINTINTIN_API rintintin_error_code rintintin_read_attrib_generic_f(double* dst, 
 RINTINTIN_API rintintin_error_code rintintin_read_attrib_generic_i(int32_t * dst, uint32_t index, void const* layout);
 
 /// visualization stuff. 
-
 
 /**
  * @brief Best-fit primitive estimation for an inertia tensor.
@@ -430,6 +430,21 @@ typedef struct rintintin_inertia_estimation
  * @param no_items Number of items to process
  */
 RINTINTIN_API rintintin_error_code rintintin_estimate_shapes(rintintin_inertia_estimation * dst, rintintin_metrics const* src, uint64_t no_items);
+
+
+struct rintintin_bounding_box_command
+{
+	rintintin_mesh const* meshes;
+	rintintin_metrics const* metrics;
+	
+	rintintin_inertia_estimation * result;
+	
+	uint32_t no_joints;
+	uint32_t no_meshes;
+	uint32_t result_byte_length;
+};
+
+RINTINTIN_API rintintin_error_code rintintin_oriented_bounding_boxes(struct rintintin_bounding_box_command * cmd);
 
 
 /// next few things are mostly internal stuff, exposed because it might be useful.

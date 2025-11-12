@@ -243,6 +243,17 @@ static rintintin_error_code rintintin_tri_callback_stage_2(dvec3 const* verts, d
 		}
 	}
 	
+	dvec3 e0 = vec3_sub(&tri.p1, &tri.p0);
+	dvec3 e1 = vec3_sub(&tri.p2, &tri.p0);
+	dvec3 c  = cross(&e0, &e1);
+	double length = sqrt(dot(&c, &c));
+	
+	float surfaceArea =  0.5 * length;
+	float weight = (weights[0] + weights[1] + weights[2]) / 3.0;
+	
+	scratch->write[joint].surfaceArea += 
+		surfaceArea * weight;
+	
 	return RINTINTIN_SUCCESS;
 }
 
@@ -284,7 +295,8 @@ rintintin_error_code rintintin_read_mesh(rintintin_command * cmd, uint32_t threa
 	userdata.no_joints = scratch->no_joints;
 		
 	// solve AABB
-	if(thread_id == no_threads_this_stage)
+	if(thread_id == no_threads_this_stage
+	|| no_threads_this_stage == 1)
 	{
 		userdata.aabbs = scratch->aabbs;
 	
@@ -518,6 +530,7 @@ rintintin_error_code rintintin_end(rintintin_command * cmd)
 		smat3 axis = parallel_axis(final_j->volume, &final_j->centroid);
 		final_j->inertia = smat3_sub(&final_j->inertia, &axis);	
 		final_j->covariance = (dvec3){final_j->inertia.xx, final_j->inertia.yy, final_j->inertia.zz};		
+		final_j->surfaceArea = scratch->latent[j].surfaceArea;
 		
 		// flip around
 		double xx = final_j->inertia.xx;
