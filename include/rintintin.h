@@ -2,7 +2,7 @@
  * @file rintintin.h
  * @brief A zero-dependency library (only stdint!) for computing metrics of skinned meshes.
  * 
- * Rintintin processes rigged/skinned 3D meshes to compute volume, centroid, and inertia tensor
+ * RinTinTin processes rigged/skinned 3D meshes to compute volume, centroid, and inertia tensor
  * properties per joint in a skeletal hierarchy. The library is designed to be pure (no global state),
  * thread-safe, and dependency-free - it performs no memory allocation internally.
  * 
