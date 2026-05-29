@@ -2,8 +2,12 @@
  * @file rintintin.h
  * @brief A zero-dependency library (only stdint!) for computing metrics of skinned meshes.
  * 
- * RinTinTin processes rigged/skinned 3D meshes to compute volume, centroid, and inertia tensor
- * properties per joint in a skeletal hierarchy. The library is designed to be pure (no global state),
+ * RinTinTin processes rigged/skinned 3D meshes to compute volume, centroid, and the second
+ * moment tensor M = integral (x-c)(x-c)^T dV per joint in a skeletal hierarchy.
+ * To obtain an inertia tensor: I = trace(M) * Identity - M, i.e. for unit density
+ *     Ixx = Myy + Mzz,  Iyy = Mxx + Mzz,  Izz = Mxx + Myy,
+ *     Ixy = -Mxy,       Ixz = -Mxz,       Iyz = -Myz.
+ * Multiply by material density to get a physical inertia tensor. The library is designed to be pure (no global state),
  * thread-safe, and dependency-free - it performs no memory allocation internally.
  * 
  */
@@ -177,8 +181,7 @@ typedef struct rintintin_metrics {
     double volume;                      ///< Volume of geometry influenced by this joint
     double surfaceArea;					 ///< Surface area of geometry influenced by this joint.
     rintintin_vec3 centroid;            ///< Center of mass in mesh space
-    rintintin_symmetric_mat3 inertia;   ///< Inertia tensor about the centroid 
-    rintintin_vec3 covariance;			 ///< Diagonal of covariance matrix (off diaginal is same as tensor)
+    rintintin_symmetric_mat3 second_moment; ///< second moment tensor about the centroid 
     
     rintintin_vec3 aabb_min;
     rintintin_vec3 aabb_max;
@@ -313,7 +316,7 @@ RINTINTIN_API rintintin_error_code rintintin_parallel_reduction(rintintin_comman
 /**
  * @brief Compute final mass properties from processed tensors.
  * 
- * Calculates volume, centroid, and inertia tensor for each joint based on
+ * Calculates volume, centroid, and second moment tensor for each joint based on
  * the processed mesh data and joint hierarchy.
  * 
  * This is O(no_joints)
@@ -436,13 +439,27 @@ struct rintintin_bounding_box_command
 {
 	rintintin_mesh const* meshes;
 	rintintin_metrics const* metrics;
-	
+
 	rintintin_inertia_estimation * result;
-	
+
+	/// Optional scratch buffer enabling argmax-cluster PCA: per-joint covariance
+	/// is recomputed from the point cloud of vertices argmax-skinned to that joint.
+	/// This makes the OBB rotation self-consistent with the extents pass (which
+	/// also uses argmax inclusion), eliminating rotation error from skinning bleed.
+	/// If NULL, the OBB function falls back to using metrics->second_moment for PCA.
+	/// If non-NULL, scratch_space_byte_length must equal
+	/// rintintin_oriented_bounding_boxes_scratch_size(no_joints) or the call returns
+	/// RINTINTIN_ERROR_INVALID_ARGUMENT.
+	void * scratch_space;
+
 	uint32_t no_joints;
 	uint32_t no_meshes;
 	uint32_t result_byte_length;
+	uint32_t scratch_space_byte_length;
 };
+
+/// Required size in bytes for the optional scratch_space buffer.
+RINTINTIN_API uint64_t rintintin_oriented_bounding_boxes_scratch_size(uint32_t no_joints);
 
 RINTINTIN_API rintintin_error_code rintintin_oriented_bounding_boxes(struct rintintin_bounding_box_command * cmd);
 

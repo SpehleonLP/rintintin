@@ -264,7 +264,7 @@ rintintin_metrics rintintin_compute_metrics_from_solid(rintintin_solidified cons
 {
 	rintintin_metrics m;
 	
-	m.inertia = a->constant;	
+	m.second_moment = a->constant;	
 	m.volume = a->mass_o;
 	
 	if(m.volume == 0.0)
@@ -278,7 +278,7 @@ rintintin_metrics rintintin_compute_metrics_from_solid(rintintin_solidified cons
 	}
 			
 	sdmat3 axis = parallel_axis(m.volume, &m.centroid);
-	m.inertia = smat3_sub(&m.inertia, &axis);	
+	m.second_moment = smat3_sub(&m.second_moment, &axis);	
 
 	return m;
 }

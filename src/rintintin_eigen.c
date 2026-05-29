@@ -150,21 +150,26 @@ rintintin_transform rintintin_transform_from_4x4(double (*matrix)[4][4])
 }
 
 
+// Sort descending: values[0] is the largest eigenvalue, vectors[0] its eigenvector.
+// For a covariance matrix this means vectors[0] points along the principal (longest)
+// axis and vectors[2] along the minor (shortest) axis. Both call sites rely on this
+// ordering so that the rotation built from vectors[0..2] as columns puts the major
+// axis on local X, matching scale order (large, mid, small).
 static rintintin_eigen rintintin_sort_eigen(rintintin_eigen * in)
 {
-	int _min = in->values[0] < in->values[1]? 0 : 1;
-	int _max = 1 - _min;
-	
-	_min = in->values[_min] <= in->values[2]? _min : 2;
-	_max = in->values[_max] > in->values[2]? _max : 2;
+	int _max = in->values[0] >= in->values[1] ? 0 : 1;
+	int _min = 1 - _max;
+
+	if (in->values[2] > in->values[_max]) _max = 2;
+	else if (in->values[2] < in->values[_min]) _min = 2;
 	//the three indices must sum to 0+1+2=3.
 	int _mid = 3 - _min - _max;
-		
+
 	rintintin_eigen r = {
-		.values={in->values[_min], in->values[_mid], in->values[_max]},
-		.vectors={in->vectors[_min], in->vectors[_mid], in->vectors[_max]},
+		.values={in->values[_max], in->values[_mid], in->values[_min]},
+		.vectors={in->vectors[_max], in->vectors[_mid], in->vectors[_min]},
 	};
-	
+
 	return r;
 }
 
@@ -188,8 +193,6 @@ static void makeConsistent(rintintin_eigen* result) {
       }
   }
   
-#define getElement(a, b, c) (a[b][c])
-
 rintintin_eigen rintintin_compute_eigen(rintintin_symmetric_mat3 const*I) {
     dmat3 A = {.m={
 		.x={I->xx, I->xy, I->xz},
@@ -201,60 +204,60 @@ rintintin_eigen rintintin_compute_eigen(rintintin_symmetric_mat3 const*I) {
 }
 
 
-rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I) {
-    double (*A)[3] = I->dbl;
-    
+rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 const* I) {
+    // Pure function: work on a local copy so the caller's matrix is untouched.
+    double A[3][3];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            A[i][j] = I->dbl[i][j];
+
     double V[3][3] = {
         {1, 0, 0},
         {0, 1, 0},
         {0, 0, 1}
     };
-    
+
     const int maxIterations = 50;
-    
-    // Compute adaptive tolerance based on matrix scale
+
+    // Frobenius-ish norm of the matrix, used as the only scale reference.
     double matrixScale = 0.0;
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
-            matrixScale += fabs(getElement(A, i, j));
+            matrixScale += fabs(A[i][j]);
         }
     }
-    
-    if(matrixScale == 0.0)
-    {
-		return (rintintin_eigen)
-		{
-			.vectors = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
-			.values = {0, 0, 0}
-		};
+
+    if (matrixScale == 0.0) {
+        return (rintintin_eigen) {
+            .vectors = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+            .values  = {0, 0, 0}
+        };
     }
-    
-    matrixScale /= 9.0; // Average absolute value of matrix elements
-    
-	// Scale matrix up to reasonable range
-	double scale_factor = 1.0;
-	if (matrixScale < 1e-6) {  // or whatever threshold makes sense
-		scale_factor = 1e6 / matrixScale;  // bring into ~1.0 range
-	}
-	if(matrixScale > 10.0)
-	{
-		scale_factor = 10.0 / matrixScale;
-	}
 
-	for(int i = 0; i < 9; ++i)		
-		A[i/3][i%3] *= scale_factor;
+    matrixScale /= 9.0; // average absolute value of matrix elements
 
-    // Adaptive tolerance: scale with matrix magnitude, but keep reasonable bounds
-    double tolerance = fmax(1e-12, fmin(1e-6, matrixScale * scale_factor * 1e-6));
-  
-	int iter = 0;
-    for (iter = 0; iter < maxIterations; iter++) {
+    // Normalise the matrix to ~unit magnitude before iterating. This keeps the
+    // off-diagonal convergence test scale-free: with elements ~1 the threshold
+    // for "this off-diagonal is effectively zero" is just machine epsilon.
+    // Eigenvalues are de-normalised at the end.
+    double scale_factor = 1.0 / matrixScale;
+    for (int i = 0; i < 9; ++i)
+        A[i/3][i%3] *= scale_factor;
+
+    // After normalisation A has |elements| ~1, so a relative tolerance
+    // of ~1e-12 is "off-diagonal indistinguishable from zero in double
+    // precision". The previous adaptive formula collapsed to ~1e-6, which
+    // let Jacobi early-out in the middle of resolving a near-degenerate
+    // 2D eigenspace (the rod/disk case) and produced a 90deg-off rotation.
+    const double tolerance = 1e-12;
+
+    for (int iter = 0; iter < maxIterations; iter++) {
         int p = 0, q = 1;
         double maxOffDiag = 0.0;
-        
+
         for (int i = 0; i < 3; i++) {
             for (int j = i + 1; j < 3; j++) {
-                double val = fabs(getElement(A, i, j));
+                double val = fabs(A[i][j]);
                 if (val > maxOffDiag) {
                     maxOffDiag = val;
                     p = i;
@@ -262,66 +265,51 @@ rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I) {
                 }
             }
         }
-        
+
         if (maxOffDiag < tolerance) {
             break;
         }
-        
-        if (fabs(getElement(A, p, q)) < 1e-15) continue;
-        
-        double tau = (getElement(A, q, q) - getElement(A, p, p)) / (2.0 * getElement(A, p, q));
+
+        double tau = (A[q][q] - A[p][p]) / (2.0 * A[p][q]);
         double t = (tau >= 0 ? 1.0 : -1.0) / (fabs(tau) + sqrt(1.0 + tau * tau));
         double c = 1.0 / sqrt(1.0 + t * t);
         double s = t * c;
-        
-        double App = getElement(A, p, p);
-        double Aqq = getElement(A, q, q);
-        double Apq = getElement(A, p, q);
-        
-        getElement(A, p, p) = c * c * App - 2.0 * s * c * Apq + s * s * Aqq;
-        getElement(A, q, q) = s * s * App + 2.0 * s * c * Apq + c * c * Aqq;
-        getElement(A, p, q) = getElement(A, q, p) = 0.0;
-        
+
+        double App = A[p][p];
+        double Aqq = A[q][q];
+        double Apq = A[p][q];
+
+        A[p][p] = c * c * App - 2.0 * s * c * Apq + s * s * Aqq;
+        A[q][q] = s * s * App + 2.0 * s * c * Apq + c * c * Aqq;
+        A[p][q] = A[q][p] = 0.0;
+
         for (int r = 0; r < 3; r++) {
             if (r != p && r != q) {
-                double Arp = getElement(A, r, p);
-                double Arq = getElement(A, r, q);
-                getElement(A, r, p) = getElement(A, p, r) = c * Arp - s * Arq;
-                getElement(A, r, q) = getElement(A, q, r) = s * Arp + c * Arq;
+                double Arp = A[r][p];
+                double Arq = A[r][q];
+                A[r][p] = A[p][r] = c * Arp - s * Arq;
+                A[r][q] = A[q][r] = s * Arp + c * Arq;
             }
         }
-        
+
         for (int i = 0; i < 3; i++) {
-            double Vip = getElement(V, i, p);
-            double Viq = getElement(V, i, q);
-            getElement(V, i, p) = c * Vip - s * Viq;
-            getElement(V, i, q) = s * Vip + c * Viq;
+            double Vip = V[i][p];
+            double Viq = V[i][q];
+            V[i][p] = c * Vip - s * Viq;
+            V[i][q] = s * Vip + c * Viq;
         }
     }
-    
+
     rintintin_eigen result;
     for (int i = 0; i < 3; i++) {
-        result.values[i] = getElement(A, i, i) / scale_factor;
-        result.vectors[i].x = getElement(V, 0, i);
-        result.vectors[i].y = getElement(V, 1, i);
-        result.vectors[i].z = getElement(V, 2, i);
+        result.values[i] = A[i][i] / scale_factor;
+        result.vectors[i].x = V[0][i];
+        result.vectors[i].y = V[1][i];
+        result.vectors[i].z = V[2][i];
     }
-        
-    makeConsistent(&result);    
-    return rintintin_sort_eigen(&result);
-}
 
-static rintintin_vec4 quat_multiply(rintintin_vec4 const* a, rintintin_vec4 const* b)
-{
-   rintintin_vec4 result;
-   
-   // Quaternion multiplication: (w1 + x1*i + y1*j + z1*k) * (w2 + x2*i + y2*j + z2*k)
-   result.w = a->w * b->w - a->x * b->x - a->y * b->y - a->z * b->z;
-   result.x = a->w * b->x + a->x * b->w + a->y * b->z - a->z * b->y;
-   result.y = a->w * b->y - a->x * b->z + a->y * b->w + a->z * b->x;
-   result.z = a->w * b->z + a->x * b->y - a->y * b->x + a->z * b->w;
-   
-   return result;
+    makeConsistent(&result);
+    return rintintin_sort_eigen(&result);
 }
 
 rintintin_error_code rintintin_estimate_shapes(rintintin_inertia_estimation * dst, rintintin_metrics const* src, uint64_t no_items)
@@ -329,208 +317,43 @@ rintintin_error_code rintintin_estimate_shapes(rintintin_inertia_estimation * ds
 	if(dst == 0 || src == 0)
 		return RINTINTIN_ERROR_NULL_POINTER;
 
-	// 90° rotations as quaternions (axis, angle)
-	const rintintin_vec4 rot_around_x = {.x=0.7071, .y=0, .z=0, .w=0.7071}; // 90° around X
-	const rintintin_vec4 rot_around_y = {.x=0, .y=0.7071, .z=0, .w=0.7071}; // 90° around Y
-	const rintintin_vec4 rot_around_z = {.x=0, .y=0.0, .z=0.7071, .w=0.7071}; // 90° around Z
+    // Degenerate-volume fallback: small but nonzero so downstream math (e.g.
+    // matrix inverse for OBB orientation drawing) does not divide by zero.
+    const rintintin_vec3 degenerate_scale = {0.0001, 0.0001, 0.0001};
 
-    const double pi = 3.14159265358979323846;
-    const double sphere_factor = 0.62035049089; // ratio for converting unit RADIUS sphere to unit VOLUME sphere
-    (void)sphere_factor;
-    (void)rot_around_x;
-    (void)rot_around_y;
-    (void)rot_around_z;
-    
     for (uint64_t i = 0; i < no_items; i++) {
-        // Compute eigendecomposition of the inertia tensor
-        rintintin_symmetric_mat3 inertia = src[i].inertia;
-        rintintin_eigen eigen = rintintin_compute_eigen(&inertia);
-        
-        // Set translation to the centroid
+        // Eigendecompose the COVARIANCE (second_moment about centroid) directly.
+        // Inertia and covariance share eigenvectors but their eigenvalue ordering
+        // is inverted (I = tr(C)*Id - C), so using covariance lets the sort produce
+        // values[0] = largest physical extent, matching rotation column order.
+        rintintin_eigen eigen = rintintin_compute_eigen(&src[i].second_moment);
+
         dst[i].translation = src[i].centroid;
-        
-        // Set rotation based on principal axes
         dst[i].rotation = rintintin_compute_rotation_quat(&eigen);
-        
-        // always positive for a valid inertia tensor anyway... 
-        double lambda_small = fabs(eigen.values[0]); // smallest eigenvalue
-        double lambda_mid = fabs(eigen.values[1]);   // middle eigenvalue  
-        double lambda_large = fabs(eigen.values[2]); // largest eigenvalue
-        double mass = src[i].volume; // treating volume as mass (density = 1)
-        
-        double best_error = mass*1e6;
-        (void)best_error;
-        
-        rintintin_vec3 best_scale = {0.01, 0.01, 0.01};
-        int best_axis = 2;
-        (void)best_axis;
-        
-        if(mass == 0)
-        {
-            dst[i].scale = (rintintin_vec3){0.0001, 0.0001, 0.0001};
-            continue;            
-        }
-        
-        // Avoid division by zero
-        if (mass < 1e-30 || lambda_large < 1e-30) {
-            dst[i].scale = (rintintin_vec3){0.01, 0.01, 0.01};
+
+        double volume = src[i].volume;
+
+        // Degenerate input: no volume, or covariance lost to floating point.
+        // Cannot recover semi-axes; emit a tiny non-zero scale.
+        if (!(volume > 1e-30) || !(fabs(eigen.values[0]) > 1e-30)) {
+            dst[i].scale = degenerate_scale;
             continue;
         }
-   
-        // Test ELLIPSOID
-        {
-			double large_axis = 5.0 * (lambda_mid + lambda_large - lambda_small) / (2.0 * mass);
-			double mid_axis = 5.0 * (lambda_small + lambda_large - lambda_mid) / (2.0 * mass);
-			double small_axis = 5.0 * (lambda_small + lambda_mid - lambda_large) / (2.0 * mass);
-			
-			int update_error = (large_axis > 0 && mid_axis > 0 && small_axis > 0);
-			
-            large_axis = sqrt(fabs(large_axis)) * sphere_factor;
-            mid_axis = sqrt(fabs(mid_axis)) * sphere_factor;
-            small_axis = sqrt(fabs(small_axis)) * sphere_factor;
-            
-			double predicted_volume = (4.0/3.0) * pi * large_axis * mid_axis * small_axis;
-			double error = fabs(predicted_volume - mass) / mass;
-		
-			if(update_error)
-				best_error = error;
-				
-			best_scale = (rintintin_vec3){large_axis, mid_axis, small_axis}; // x=minor, z=major   
-        }
-#if 0
-        // Test CUBE
-		// Test BOX (rectangular cuboid)
-		{
-			// For a box with dimensions a, b, c:
-			// I_xx = (1/12)*m*(b² + c²)
-			// I_yy = (1/12)*m*(a² + c²)  
-			// I_zz = (1/12)*m*(a² + b²)
-			// 
-			// Solving for dimensions:
-			// a² = (6/m) * (I_yy + I_zz - I_xx)
-			// b² = (6/m) * (I_xx + I_zz - I_yy)
-			// c² = (6/m) * (I_xx + I_yy - I_zz)
-			
-			double a_squared = (6.0 / mass) * (lambda_mid + lambda_large - lambda_small);
-			double b_squared = (6.0 / mass) * (lambda_small + lambda_large - lambda_mid);
-			double c_squared = (6.0 / mass) * (lambda_small + lambda_mid - lambda_large);
-			
-			if (a_squared > 0 && b_squared > 0 && c_squared > 0) {
-				double a = sqrt(a_squared);
-				double b = sqrt(b_squared);
-				double c = sqrt(c_squared);
-				
-				double predicted_volume = a * b * c;
-			//	if(predicted_volume < mass)
-				{
-					double error = fabs(predicted_volume - mass) / mass;
-					
-					if (error < best_error) {
-						best_error = error;
-						best_type = RINTINTIN_UNIT_CUBE; // You'll need to define this constant
-						best_scale = (rintintin_vec3){a, b, c};
-					}
-				}
-			}
-		}
-#endif
 
-#if 0
-		// Test CYLINDER (try each axis as the cylinder axis)
-		{
-			for (int axis = 0; axis < 3; axis++) {
-				double axis_eigenvalue, perp_eigenvalue1, perp_eigenvalue2;
-				
-				if (axis == 0) { // X-axis is cylinder axis
-					axis_eigenvalue = lambda_small;
-					perp_eigenvalue1 = lambda_mid;
-					perp_eigenvalue2 = lambda_large;
-				} else if (axis == 1) { // Y-axis is cylinder axis  
-					axis_eigenvalue = lambda_mid;
-					perp_eigenvalue1 = lambda_small;
-					perp_eigenvalue2 = lambda_large;
-				} else { // Z-axis is cylinder axis
-					axis_eigenvalue = lambda_large;
-					perp_eigenvalue1 = lambda_small;
-					perp_eigenvalue2 = lambda_mid;
-				}
-				
-				// For cylinder: I_perp = (1/12)*m*(3*r² + h²), I_axis = (1/2)*m*r²
-				double r_squared = 2.0 * axis_eigenvalue / mass;
-				double avg_perp = (perp_eigenvalue1 + perp_eigenvalue2) / 2.0;
-				double h_squared = 12.0 * (avg_perp - axis_eigenvalue/2.0) / mass;
-				
-				if (r_squared > 0 && h_squared > 0) {
-					double r = sqrt(r_squared);
-					double h = sqrt(h_squared);
-					double predicted_volume = pi * r * r * h;
-					double error = fabs(predicted_volume - mass) / mass;
-					
-					if (predicted_volume < mass && error < best_error) {
-						best_error = error;
-						best_type = RINTINTIN_UNIT_CYLINDER;
-						best_axis = axis;
-						
-						best_scale = (rintintin_vec3){r, r, h};
-					}
-				}
-			}
-		}
-#endif
-#if 0
-        // Test CONE (try each axis as the cone axis)
-		{
-			for (int axis = 0; axis < 3; axis++) {
-				double axis_eigenvalue, perp_eigenvalue1, perp_eigenvalue2;
-				
-				if (axis == 0) { // X-axis is cone axis
-					axis_eigenvalue = lambda_small;
-					perp_eigenvalue1 = lambda_mid;
-					perp_eigenvalue2 = lambda_large;
-				} else if (axis == 1) { // Y-axis is cone axis
-					axis_eigenvalue = lambda_mid;
-					perp_eigenvalue1 = lambda_small;
-					perp_eigenvalue2 = lambda_large;
-				} else { // Z-axis is cone axis
-					axis_eigenvalue = lambda_large;
-					perp_eigenvalue1 = lambda_small;
-					perp_eigenvalue2 = lambda_mid;
-				}
-				
-				// For cone: I_perp = (3/80)*m*(4*r² + h²), I_axis = (3/10)*m*r²
-				double r_squared = 10.0 * axis_eigenvalue / (3.0 * mass);
-				double avg_perp = (perp_eigenvalue1 + perp_eigenvalue2) / 2.0;
-				double h_squared = 80.0 * (avg_perp - 3.0*axis_eigenvalue/20.0) / (3.0 * mass);
-				
-				if (r_squared > 0 && h_squared > 0) {
-					double r = sqrt(r_squared);
-					double h = sqrt(h_squared);
-					double predicted_volume = (1.0/3.0) * pi * r * r * h;
-					double error = fabs(predicted_volume - mass) / mass;
-					
-					if (error < best_error) {
-						best_error = error;
-						best_type = RINTINTIN_UNIT_CONE;
-						best_scale = (rintintin_vec3){r, h, r};
-						best_axis = axis;
-					}
-				}
-			}
-		}
-		
-#endif		
-		if (best_axis == 0) { // Z axis needs to be rotated to face X direction
-			dst[i].rotation = quat_multiply(&dst[i].rotation, &rot_around_y);
-		} 
-		else if (best_axis == 1) { // Z-axis needs to align with Y  
-			dst[i].rotation = quat_multiply(&dst[i].rotation, &rot_around_x);
-		}
+        // ELLIPSOID fit: for a solid ellipsoid of uniform density with semi-axes
+        // (a,b,c) and volume V, the covariance eigenvalues are lambda_i = V*a_i^2 / 5.
+        // Inverted: a_i = sqrt(5 * lambda_i / V). Descending eigen sort means
+        // values[0] is the major semi-axis, which aligns with local X (rotation
+        // column 0), so scale order naturally matches rotation column order.
+        double k = 5.0 / volume;
+        double sx = sqrt(fabs(eigen.values[0]) * k);
+        double sy = sqrt(fabs(eigen.values[1]) * k);
+        double sz = sqrt(fabs(eigen.values[2]) * k);
 
-
-        dst[i].scale = best_scale;
+        dst[i].scale = (rintintin_vec3){sx, sy, sz};
     }
-    
-	return RINTINTIN_SUCCESS;
+
+    return RINTINTIN_SUCCESS;
 }
 
 /**
@@ -661,38 +484,150 @@ rintintin_matrix_classification rintintin_sym_mat3_classify(rintintin_symmetric_
 }
 
 
-static rintintin_error_code rintintin_oriented_bounding_box_cb(struct rintintin_vertex const* vert, void * user_data)
+// Argmax skin influence: returns the joint index this vertex is most strongly
+// bound to, or -1 if no positive-weight joint exists. Used by both the
+// covariance accumulation pass and the extents (min/max) pass so that the OBB
+// rotation and extents are computed on the SAME point cloud (eliminating the
+// rotation error caused by skinning weight bleed between chained bones).
+static int rintintin_obb_argmax_joint(struct rintintin_vertex const* vert)
 {
-	struct rintintin_bounding_box_command * cmd =  ((struct rintintin_bounding_box_command*)user_data);
-	
-	for(int i = 0; i < 4; ++i)
-	{
-		if(vert->joint[i] >= 0
-		&& (&vert->weight.x)[i] > 0)
-		{
-			int j = vert->joint[i];
-			
-			rintintin_inertia_estimation* obb = &cmd->result[j];
-			
-			// 1. Center around centroid
-			rintintin_vec3 centered = vec3_sub((dvec3*)&vert->position, &cmd->metrics[j].centroid);
-			rintintin_vec3 local = rintintin_quat_conjugate_mul_vec3(&obb->rotation, &centered);
-    
-			// Update min/max in oriented space (using scale/translation as temporary storage)
-			obb->scale.x = (local.x < obb->scale.x) ? local.x : obb->scale.x;
-			obb->scale.y = (local.y < obb->scale.y) ? local.y : obb->scale.y;
-			obb->scale.z = (local.z < obb->scale.z) ? local.z : obb->scale.z;
-			
-			obb->translation.x = (local.x > obb->translation.x) ? local.x : obb->translation.x;
-			obb->translation.y = (local.y > obb->translation.y) ? local.y : obb->translation.y;
-			obb->translation.z = (local.z > obb->translation.z) ? local.z : obb->translation.z;
+	int dom = -1;
+	double dom_w = 0.0;
+	for (int i = 0; i < 4; ++i) {
+		double w = (&vert->weight.x)[i];
+		if (vert->joint[i] >= 0 && w > dom_w) {
+			dom_w = w;
+			dom = i;
 		}
 	}
+	return dom < 0 ? -1 : vert->joint[dom];
+}
+
+// Per-joint accumulator for the argmax-cluster PCA pass.
+//
+// Two phases, two views over the same 80-byte slot:
+//   Phase A (pass 1, accumulating raw moments):
+//     count + sum_xyz + raw outer-product sums (sxx..szz).
+//   Phase B (post-prep, used by extents pass + refinement):
+//     centroid_xyz (aliases sum_xyz, written in the prep stage) plus the
+//     spent slots (was count + sxx..szz) repurposed as best_min_xyz / best_max_xyz
+//     scratch for the refinement loop's save-and-revert pattern. count's slot
+//     is unused in phase B (8 spare bytes).
+typedef struct rintintin_obb_accum {
+	union {
+		struct {
+			uint64_t count;
+			double sum_x, sum_y, sum_z;
+			double sxx, sxy, sxz, syy, syz, szz;
+		};
+		struct {
+			uint64_t _pad;
+			double cx, cy, cz;
+			double bmin_x, bmin_y, bmin_z;
+			double bmax_x, bmax_y, bmax_z;
+		};
+	};
+} rintintin_obb_accum;
+
+uint64_t rintintin_oriented_bounding_boxes_scratch_size(uint32_t no_joints)
+{
+	return (uint64_t)sizeof(rintintin_obb_accum) * no_joints;
+}
+
+static rintintin_error_code rintintin_obb_accum_cb(struct rintintin_vertex const* vert, void * user_data)
+{
+	struct rintintin_bounding_box_command * cmd = (struct rintintin_bounding_box_command*)user_data;
+	rintintin_obb_accum * scratch = (rintintin_obb_accum*)cmd->scratch_space;
+
+	int j = rintintin_obb_argmax_joint(vert);
+	if (j < 0) return RINTINTIN_SUCCESS;
+
+	rintintin_obb_accum * a = &scratch[j];
+	double x = vert->position.x;
+	double y = vert->position.y;
+	double z = vert->position.z;
+
+	a->count++;
+	a->sum_x += x; a->sum_y += y; a->sum_z += z;
+	a->sxx += x*x; a->sxy += x*y; a->sxz += x*z;
+	a->syy += y*y; a->syz += y*z; a->szz += z*z;
+	return RINTINTIN_SUCCESS;
+}
+
+static rintintin_error_code rintintin_oriented_bounding_box_cb(struct rintintin_vertex const* vert, void * user_data)
+{
+	struct rintintin_bounding_box_command * cmd = (struct rintintin_bounding_box_command*)user_data;
+
+	int j = rintintin_obb_argmax_joint(vert);
+	if (j < 0) return RINTINTIN_SUCCESS;
+
+	rintintin_inertia_estimation* obb = &cmd->result[j];
+
+	// Centroid source: argmax-cluster centroid (stored in scratch by pass 1) when
+	// scratch is provided; otherwise fall back to the weighted mass centroid from
+	// metrics. The two differ for bones with skinning bleed; using scratch keeps
+	// the rotation and extents anchored on the same point cloud.
+	rintintin_vec3 centroid;
+	if (cmd->scratch_space != 0L) {
+		rintintin_obb_accum const* a = &((rintintin_obb_accum const*)cmd->scratch_space)[j];
+		centroid.x = a->sum_x;
+		centroid.y = a->sum_y;
+		centroid.z = a->sum_z;
+	} else {
+		centroid = cmd->metrics[j].centroid;
+	}
+
+	rintintin_vec3 centered = vec3_sub((dvec3*)&vert->position, &centroid);
+	rintintin_vec3 local = rintintin_quat_conjugate_mul_vec3(&obb->rotation, &centered);
+
+	// Update min/max in oriented space (using scale/translation as temporary storage)
+	obb->scale.x = (local.x < obb->scale.x) ? local.x : obb->scale.x;
+	obb->scale.y = (local.y < obb->scale.y) ? local.y : obb->scale.y;
+	obb->scale.z = (local.z < obb->scale.z) ? local.z : obb->scale.z;
+
+	obb->translation.x = (local.x > obb->translation.x) ? local.x : obb->translation.x;
+	obb->translation.y = (local.y > obb->translation.y) ? local.y : obb->translation.y;
+	obb->translation.z = (local.z > obb->translation.z) ? local.z : obb->translation.z;
 
 	return RINTINTIN_SUCCESS;
 }
-	
-/// get oriented bounding boxes. 
+
+// Hamilton product (q1 * q2): the resulting rotation applies q2 first, then q1
+// when used in q v q* form. We use local-frame perturbation -- best * delta --
+// so the perturbation axes track the current box orientation.
+static rintintin_vec4 rintintin_obb_quat_mul(rintintin_vec4 a, rintintin_vec4 b)
+{
+	rintintin_vec4 r;
+	r.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
+	r.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
+	r.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
+	r.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
+	return r;
+}
+
+// Unit quaternion for a rotation of `theta` radians about the given local axis
+// (0=x, 1=y, 2=z). delta_quat(axis, -theta) is the inverse rotation, used to
+// revert a rejected trial without storing a backup of the rotation.
+static rintintin_vec4 rintintin_obb_delta_quat(int axis, double theta)
+{
+	double h = theta * 0.5;
+	double s = sin(h);
+	double c = cos(h);
+	rintintin_vec4 q = {.x = 0, .y = 0, .z = 0, .w = c};
+	if (axis == 0) q.x = s;
+	else if (axis == 1) q.y = s;
+	else q.z = s;
+	return q;
+}
+
+/// Compute oriented bounding boxes from the joint covariance + the joint's
+/// argmax-skinned vertex cluster.
+///
+/// If cmd->scratch_space is non-NULL, the OBB rotation comes from the eigen
+/// decomposition of the covariance recomputed from each joint's argmax cluster
+/// (rotation and extents share the same point cloud -> self-consistent).
+/// If NULL, falls back to using metrics->second_moment for the rotation; the
+/// extents pass still uses argmax inclusion either way.
 rintintin_error_code rintintin_oriented_bounding_boxes(struct rintintin_bounding_box_command * cmd)
 {
 	if(cmd == 0L
@@ -700,74 +635,207 @@ rintintin_error_code rintintin_oriented_bounding_boxes(struct rintintin_bounding
 	|| cmd->metrics == 0L
 	|| cmd->result == 0L)
 		return RINTINTIN_ERROR_NULL_POINTER;
-		
+
 	if(cmd->result_byte_length != sizeof(*cmd->result) * cmd->no_joints)
 		return RINTINTIN_ERROR_INVALID_ARGUMENT;
-		
-    // Process each joint
-    for(uint32_t i = 0u; i < cmd->no_joints; ++i)
-    {
-        rintintin_metrics const* metrics = &cmd->metrics[i];
-        rintintin_inertia_estimation* obb = &cmd->result[i];
-        
-        smat3 covariance =
-        {
-			.xx=metrics->covariance.x,
-			.yy=metrics->covariance.y,
-			.zz=metrics->covariance.z,
-			
-			.xy=metrics->inertia.xy,
-			.xz=metrics->inertia.xz,
-			.yz=metrics->inertia.yz,
-		};
-        
-        // Compute eigendecomposition of inertia tensor (or covariance matrix)
-        rintintin_eigen eigen = rintintin_compute_eigen(&covariance);
-        
-        // Create rotation matrix from eigenvectors (principal axes)
-        rintintin_mat3x3 rot_matrix;
-        rintintin_compute_rotation_3x3(&rot_matrix, &eigen);
-                
-        obb->scale = (dvec3){1e200, 1e200, 1e200};      // min
-        obb->translation = (dvec3){-1e200, -1e200, -1e200}; // max (temporary)
-        obb->rotation = rintintin_quat_from_3x3(&rot_matrix);
-    }
-            
-	// Visit all vertices for this joint
-	for(uint64_t mesh_idx = 0; mesh_idx < cmd->no_meshes; ++mesh_idx)
-	{
-		int ec = rintintin_visit_each_index(&cmd->meshes[mesh_idx], 0, 1, 
-										   rintintin_oriented_bounding_box_cb, cmd);
-		
-		if(ec != RINTINTIN_SUCCESS)
-			return ec;
+
+	rintintin_obb_accum * scratch = (rintintin_obb_accum*)cmd->scratch_space;
+	if (scratch != 0L) {
+		uint64_t need = rintintin_oriented_bounding_boxes_scratch_size(cmd->no_joints);
+		if (cmd->scratch_space_byte_length != need)
+			return RINTINTIN_ERROR_INVALID_ARGUMENT;
+
+		// Zero the accumulators (no allocation -- caller-provided buffer).
+		for (uint32_t i = 0u; i < cmd->no_joints; ++i)
+			scratch[i] = (rintintin_obb_accum){0};
+
+		// Pass 1: accumulate raw moments per argmax joint.
+		for (uint64_t mesh_idx = 0; mesh_idx < cmd->no_meshes; ++mesh_idx) {
+			int ec = rintintin_visit_each_index(&cmd->meshes[mesh_idx], 0, 1,
+												rintintin_obb_accum_cb, cmd);
+			if (ec != RINTINTIN_SUCCESS) return ec;
+		}
 	}
-	
-    // Process each joint
-    for(uint32_t i = 0u; i < cmd->no_joints; ++i)
-    { 
-        rintintin_inertia_estimation* obb = &cmd->result[i];
-        rintintin_metrics const* metrics = &cmd->metrics[i];
-        
-        // Extract min/max from temporary storage
-        dvec3 local_min = obb->scale;
-        dvec3 local_max = obb->translation;
-        
-        if(obb->scale.x < obb->translation.x)
-        {
-			// Compute half-extents (scale) in oriented space
+
+	// Per joint: compute (or look up) the covariance, eigendecompose, set the
+	// rotation, and initialise the min/max accumulators for the extents pass.
+	for (uint32_t i = 0u; i < cmd->no_joints; ++i)
+	{
+		rintintin_inertia_estimation* obb = &cmd->result[i];
+		rintintin_symmetric_mat3 cov;
+
+		if (scratch != 0L) {
+			rintintin_obb_accum * a = &scratch[i];
+			if (a->count > 0) {
+				double inv = 1.0 / (double)a->count;
+				double cx = a->sum_x * inv;
+				double cy = a->sum_y * inv;
+				double cz = a->sum_z * inv;
+				cov.xx = a->sxx * inv - cx*cx;
+				cov.yy = a->syy * inv - cy*cy;
+				cov.zz = a->szz * inv - cz*cz;
+				cov.xy = a->sxy * inv - cx*cy;
+				cov.xz = a->sxz * inv - cx*cz;
+				cov.yz = a->syz * inv - cy*cz;
+				// Replace running sums with the cluster centroid for pass 2.
+				a->sum_x = cx;
+				a->sum_y = cy;
+				a->sum_z = cz;
+			} else {
+				// No argmax vertices for this joint: covariance is degenerate.
+				// Use identity rotation; final extents will be zero.
+				cov = (rintintin_symmetric_mat3){0};
+				a->sum_x = cmd->metrics[i].centroid.x;
+				a->sum_y = cmd->metrics[i].centroid.y;
+				a->sum_z = cmd->metrics[i].centroid.z;
+			}
+		} else {
+			cov = cmd->metrics[i].second_moment;
+		}
+
+		rintintin_eigen eigen = rintintin_compute_eigen(&cov);
+		rintintin_mat3x3 rot_matrix;
+		rintintin_compute_rotation_3x3(&rot_matrix, &eigen);
+
+		obb->scale       = (dvec3){ 1e200,  1e200,  1e200};   // min
+		obb->translation = (dvec3){-1e200, -1e200, -1e200};   // max
+		obb->rotation    = rintintin_quat_from_3x3(&rot_matrix);
+	}
+
+	// Pass 2: argmax extents in the PCA-rotated frame.
+	for (uint64_t mesh_idx = 0; mesh_idx < cmd->no_meshes; ++mesh_idx) {
+		int ec = rintintin_visit_each_index(&cmd->meshes[mesh_idx], 0, 1,
+											rintintin_oriented_bounding_box_cb, cmd);
+		if (ec != RINTINTIN_SUCCESS) return ec;
+	}
+
+	// Optional refinement: PCA gives the best linear-Gaussian fit, which is
+	// suboptimal for bent / asymmetric vertex clusters. Coordinate-descent on
+	// box volume (one mesh pass per perturbation) finds a local minimum that's
+	// usually visibly tighter. Requires scratch (we save min/max backups there
+	// to allow rejected trials to revert without an extra recovery pass).
+	if (scratch != 0L)
+	{
+		const double REFINE_STEP_INIT  = 0.20;    // ~11.5 deg starting perturbation
+		const double REFINE_STEP_FLOOR = 0.005;   // ~0.29 deg, stop when step shrinks below
+		const int    REFINE_MAX_PASSES = 64;      // hard cap on mesh passes
+
+		double step = REFINE_STEP_INIT;
+		int passes = 0;
+		while (step >= REFINE_STEP_FLOOR && passes < REFINE_MAX_PASSES)
+		{
+			int improved_this_round = 0;
+			for (int axis = 0; axis < 3 && passes < REFINE_MAX_PASSES; ++axis)
+			{
+				for (int sign = -1; sign <= 1 && passes < REFINE_MAX_PASSES; sign += 2)
+				{
+					double theta = step * (double)sign;
+					rintintin_vec4 d     = rintintin_obb_delta_quat(axis,  theta);
+					rintintin_vec4 d_inv = rintintin_obb_delta_quat(axis, -theta);
+
+					// Save current best (min, max) into scratch and apply the
+					// perturbation in the local frame: trial_q = best_q * delta.
+					// Reset result's min/max accumulators for the trial pass.
+					for (uint32_t j = 0; j < cmd->no_joints; ++j) {
+						rintintin_inertia_estimation* obb = &cmd->result[j];
+						rintintin_obb_accum* a = &scratch[j];
+						a->bmin_x = obb->scale.x;
+						a->bmin_y = obb->scale.y;
+						a->bmin_z = obb->scale.z;
+						a->bmax_x = obb->translation.x;
+						a->bmax_y = obb->translation.y;
+						a->bmax_z = obb->translation.z;
+						obb->rotation = rintintin_obb_quat_mul(obb->rotation, d);
+						obb->scale       = (dvec3){ 1e200,  1e200,  1e200};
+						obb->translation = (dvec3){-1e200, -1e200, -1e200};
+					}
+
+					// Trial mesh pass: existing callback fills result[j].scale/translation
+					// with trial min/max in the perturbed local frame.
+					for (uint64_t mesh_idx = 0; mesh_idx < cmd->no_meshes; ++mesh_idx) {
+						int ec = rintintin_visit_each_index(&cmd->meshes[mesh_idx], 0, 1,
+															rintintin_oriented_bounding_box_cb, cmd);
+						if (ec != RINTINTIN_SUCCESS) return ec;
+					}
+					++passes;
+
+					// Per joint: compare volumes, accept or revert.
+					for (uint32_t j = 0; j < cmd->no_joints; ++j) {
+						rintintin_inertia_estimation* obb = &cmd->result[j];
+						rintintin_obb_accum* a = &scratch[j];
+
+						double tex = obb->translation.x - obb->scale.x;
+						double tey = obb->translation.y - obb->scale.y;
+						double tez = obb->translation.z - obb->scale.z;
+						double bex = a->bmax_x - a->bmin_x;
+						double bey = a->bmax_y - a->bmin_y;
+						double bez = a->bmax_z - a->bmin_z;
+
+						// Reject any degenerate/invalid trial (joint with no
+						// argmax vertices ends up with min/max still +-inf).
+						int trial_valid = (tex > 0 && tey > 0 && tez > 0);
+						int best_valid  = (bex > 0 && bey > 0 && bez > 0);
+
+						double trial_vol = trial_valid ? tex * tey * tez : 1e300;
+						double best_vol  = best_valid  ? bex * bey * bez : 1e300;
+
+						if (trial_valid && trial_vol < best_vol) {
+							improved_this_round = 1;
+							// Accept: result is already the trial state.
+						} else {
+							// Revert rotation and restore (min, max).
+							obb->rotation = rintintin_obb_quat_mul(obb->rotation, d_inv);
+							obb->scale.x = a->bmin_x; obb->scale.y = a->bmin_y; obb->scale.z = a->bmin_z;
+							obb->translation.x = a->bmax_x; obb->translation.y = a->bmax_y; obb->translation.z = a->bmax_z;
+						}
+					}
+				}
+			}
+			if (!improved_this_round)
+				step *= 0.5;
+		}
+	}
+
+	// Finalize: convert min/max into (half-extents, world-space center).
+	for (uint32_t i = 0u; i < cmd->no_joints; ++i)
+	{
+		rintintin_inertia_estimation* obb = &cmd->result[i];
+
+		rintintin_vec3 centroid;
+		if (scratch != 0L) {
+			rintintin_obb_accum const* a = &scratch[i];
+			centroid.x = a->sum_x;
+			centroid.y = a->sum_y;
+			centroid.z = a->sum_z;
+		} else {
+			centroid = cmd->metrics[i].centroid;
+		}
+
+		dvec3 local_min = obb->scale;
+		dvec3 local_max = obb->translation;
+
+		if (local_min.x < local_max.x)
+		{
+			rintintin_vec3 center_local = {
+				(local_max.x + local_min.x) * 0.5,
+				(local_max.y + local_min.y) * 0.5,
+				(local_max.z + local_min.z) * 0.5,
+			};
+
 			obb->scale.x = (local_max.x - local_min.x) * 0.5;
 			obb->scale.y = (local_max.y - local_min.y) * 0.5;
 			obb->scale.z = (local_max.z - local_min.z) * 0.5;
-        }
-        else
-        {
+
+			rintintin_vec3 center_world = rintintin_quat_mul_vec3(&obb->rotation, &center_local);
+			obb->translation = vec3_add(&centroid, &center_world);
+		}
+		else
+		{
+			// No vertices touched this joint.
 			obb->scale = (dvec3){0, 0, 0};
-        }
-        
-        // Restore centroid (center of OBB in world space)
-        obb->translation = metrics->centroid;
-    }
-    
-    return RINTINTIN_SUCCESS;
+			obb->translation = centroid;
+		}
+	}
+
+	return RINTINTIN_SUCCESS;
 }

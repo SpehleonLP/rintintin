@@ -1,13 +1,13 @@
 
 # Rintintin
 
-A zero-dependency C library for computing colliders, mass properties, and inertia tensors of every bone of a skinned mesh individually.
+A zero-dependency C library for computing colliders, mass properties, and second moment tensors (from which inertia tensors are derived) of every bone of a skinned mesh individually.
 
 ## Overview
 
 Rintintin solves the generalized rigid body problem for skinned meshes. Functionally: nth order mass tensors are undefined for non-manifold objects. I created a definition, and my evidence that my definition is correct is that rintintin works. 
 
-As seen here it computed the masses, centroids and moments of inertia for each bone individually and displayed them as ellipsoids. You can see the animal then the auto-generated rigid-body set for the animal.
+As seen here it computed the masses, centroids and second moment tensors for each bone individually and displayed them as ellipsoids (a moment of inertia is one trace-and-flip away — see "Output Data" below). You can see the animal then the auto-generated rigid-body set for the animal.
 
 ![Top](images/top-view.webp) ![Side](images/side-view.webp) ![Iso](images/isometric-view.webp)
 
@@ -114,7 +114,7 @@ MyThreadPool.run(num_threads, [&](int thread_id) {
 
 rintintin_end(cmd);
 
-// Results now contain volume, centroid, and inertia for each joint
+// Results now contain volume, centroid, and second moment tensor for each joint
 free(cmd.scratch_space);
 return result;
 ```
@@ -184,18 +184,36 @@ For each joint, you get:
 
 ```c
 typedef struct {
-    double volume;                      // Volume influenced by this joint
-    rintintin_vec3 centroid;            // Center of mass (mesh space)
-    rintintin_symmetric_mat3 inertia;   // Inertia tensor about centroid
+    double volume;                          // Volume influenced by this joint
+    rintintin_vec3 centroid;                // Center of mass (mesh space)
+    rintintin_symmetric_mat3 second_moment; // Second moment tensor about centroid:
+                                            //   M_ij = integral (x_i - c_i)(x_j - c_j) dV
+                                            // Units m^5 (pre-multiplied by volume, unit density).
 } rintintin_metrics;
 ```
 
-The inertia tensor is stored in compressed symmetric form:
+The second moment tensor is stored in compressed symmetric form:
 ```
 | xx  xy  xz |
-| xy  yy  yz |  
+| xy  yy  yz |
 | xz  yz  zz |
 ```
+
+### Converting to an inertia tensor
+
+This is the main thing you will want to do with the second moment tensor. Remember
+to flip the signs of the off-diagonal terms:
+
+```
+Ixx = M.yy + M.zz       Ixy = -M.xy
+Iyy = M.xx + M.zz       Ixz = -M.xz
+Izz = M.xx + M.yy       Iyz = -M.yz
+```
+
+i.e. `I = trace(M) * Identity - M` (with the standard physics sign convention on
+off-diagonals). Multiply by material density to obtain a physical inertia tensor;
+add parallel-axis terms to combine multiple joints' tensors at a shared reference
+point.
 
 ## Best Practices
 
@@ -220,7 +238,7 @@ The inertia tensor is stored in compressed symmetric form:
 - Input: Mesh space coordinates
 - Joint translations: Mesh space
 - Output centroids: Mesh space
-- Inertia tensors: About the computed centroid
+- Second moment tensors: About the computed centroid
 
 Transform results to your desired coordinate system after computation.
 

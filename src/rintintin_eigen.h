@@ -2,7 +2,7 @@
 #define RINTINTIN_EIGEN_H
 #include "rintintin_scratch.h"
 
-rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 *I);
+rintintin_eigen rintintin_compute_eigen_m3(rintintin_mat3x3 const* I);
 
 typedef enum rintintin_matrix_classification
 {

@@ -186,7 +186,7 @@ rintintin_error_code rintintin_begin(rintintin_command * cmd)
 		while(stack_size)
 		{
 			uint32_t top = stack[--stack_size];
-			scratch->joints[index] = top;
+			scratch->joints[index++] = top;
 			
 			for(uint64_t i = 0; i < counters[top]; ++i)
 			{
@@ -512,7 +512,7 @@ rintintin_error_code rintintin_end(rintintin_command * cmd)
 			final_j->centroid.z = (acc_j->centroid.z - final_j->centroid.z) * invVolume;
 		}
 			
-		final_j->inertia = smat3_sub(&acc_j->inertia, &final_j->inertia);	
+		final_j->second_moment = smat3_sub(&acc_j->second_moment, &final_j->second_moment);	
 		
 		if(p >= 0)
 		{
@@ -522,25 +522,19 @@ rintintin_error_code rintintin_end(rintintin_command * cmd)
 			final_p->centroid.x += acc_j->centroid.x;
 			final_p->centroid.y += acc_j->centroid.y;
 			final_p->centroid.z += acc_j->centroid.z;
-			final_p->inertia = smat3_add(&acc_j->inertia, &final_p->inertia);	
+			final_p->second_moment = smat3_add(&acc_j->second_moment, &final_p->second_moment);	
 		}	
 					
 		// parallel axis theorem...
 		// (we measured the inertia at the origin so move it to the centroid)				
 		smat3 axis = parallel_axis(final_j->volume, &final_j->centroid);
-		final_j->inertia = smat3_sub(&final_j->inertia, &axis);	
-		final_j->covariance = (dvec3){final_j->inertia.xx, final_j->inertia.yy, final_j->inertia.zz};		
+		final_j->second_moment = smat3_sub(&final_j->second_moment, &axis);		
 		final_j->surfaceArea = scratch->latent[j].surfaceArea;
 		
-		// flip around
-		double xx = final_j->inertia.xx;
-		double yy = final_j->inertia.yy;
-		double zz = final_j->inertia.zz;
+		final_j->second_moment.xy = -final_j->second_moment.xy;
+		final_j->second_moment.xz = -final_j->second_moment.xz;
+		final_j->second_moment.yz = -final_j->second_moment.yz;
 				
-		final_j->inertia.xx = yy + zz;
-		final_j->inertia.yy = xx + zz;
-		final_j->inertia.zz = xx + yy;
-		
 		final_j->aabb_min = scratch->aabbs[j].min;
 		final_j->aabb_max = scratch->aabbs[j].max;
 	}

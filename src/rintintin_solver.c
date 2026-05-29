@@ -137,7 +137,7 @@ rintintin_error_code rintintin_solve(rintintin_command * cmd, struct rintintin_m
 		rintintin_solidified as_solid = rintintin_solidify(subtree_j, &r.solution);
 
 		acc_j->volume = as_solid.mass_o;
-		acc_j->inertia = as_solid.constant;
+		acc_j->second_moment = as_solid.constant;
 		
 		acc_j->centroid.x = as_solid.linear_o.x * 0.5;
 		acc_j->centroid.y = as_solid.linear_o.y * 0.5;

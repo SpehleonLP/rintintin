@@ -258,11 +258,36 @@ static inline  rintintin_mat3x3 rintintin_mat3x3_transpose(const rintintin_mat3x
 }
 
 /**
+ * @brief Rotate a vector by a quaternion (forward rotation).
+ *
+ * Computes q · p · q*. Standard Fabian Giesen identity:
+ *   result = p + w*t + cross(q.xyz, t),  t = 2 * cross(q.xyz, p).
+ */
+static inline rintintin_vec3 rintintin_quat_mul_vec3(const rintintin_vec4* quat, const rintintin_vec3 * p)
+{
+    double qx = quat->x;
+    double qy = quat->y;
+    double qz = quat->z;
+    double qw = quat->w;
+
+    double tx = 2.0 * (qy * p->z - qz * p->y);
+    double ty = 2.0 * (qz * p->x - qx * p->z);
+    double tz = 2.0 * (qx * p->y - qy * p->x);
+
+    rintintin_vec3 result;
+    result.x = p->x + qw * tx + (qy * tz - qz * ty);
+    result.y = p->y + qw * ty + (qz * tx - qx * tz);
+    result.z = p->z + qw * tz + (qx * ty - qy * tx);
+
+    return result;
+}
+
+/**
  * @brief Rotate a vector by the conjugate of a quaternion (inverse rotation).
- * 
+ *
  * Computes q* × p × q where q* is the conjugate of the quaternion.
  * This is equivalent to applying the inverse rotation of q to vector p.
- * 
+ *
  * @param quat Quaternion (x, y, z, w)
  * @param p Vector to rotate
  * @return Rotated vector
@@ -278,17 +303,20 @@ static inline rintintin_vec3 rintintin_quat_conjugate_mul_vec3(const rintintin_v
     // Conjugate has negated vector part
     // q* = (w, -x, -y, -z)
     
-    // First: t = 2 * cross(q.xyz, p)
+    // Forward rotation q p q* expands to: p + w*t + cross(q.xyz, t),
+    // with t = 2 * cross(q.xyz, p).
+    // For the conjugate rotation q* p q, the cross-product chain runs against
+    // -q.xyz, which collapses to flipping the sign of the w*t term while
+    // leaving cross(q.xyz, t) alone: result = p - w*t + cross(q.xyz, t).
+    // (The previous code had both signs wrong and produced non-rotations.)
     double tx = 2.0 * (qy * p->z - qz * p->y);
     double ty = 2.0 * (qz * p->x - qx * p->z);
     double tz = 2.0 * (qx * p->y - qy * p->x);
-    
-    // Then: result = p + w*t + cross(q.xyz, t)
-    // But since we want conjugate, we use: result = p + w*t - cross(q.xyz, t)
+
     rintintin_vec3 result;
-    result.x = p->x + qw * tx - (qy * tz - qz * ty);
-    result.y = p->y + qw * ty - (qz * tx - qx * tz);
-    result.z = p->z + qw * tz - (qx * ty - qy * tx);
+    result.x = p->x - qw * tx + (qy * tz - qz * ty);
+    result.y = p->y - qw * ty + (qz * tx - qx * tz);
+    result.z = p->z - qw * tz + (qx * ty - qy * tx);
     
     return result;
 }
