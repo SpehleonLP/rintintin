@@ -107,8 +107,12 @@ rintintin_error_code rintintin_solve(rintintin_command * cmd, struct rintintin_m
 	memo.root = rintintin_compute_child_table(scratch, cmd->skin.parents, memo.counters);
 	if(memo.root < 0) return memo.root;	
 
-	int root = rintintin_solve_blame(cmd, &memo);
-	if(root < 0) return root;
+	// Without the flag this pass was run for every joint and its result discarded.
+	if(cmd->flags & RINTINTIN_SOLVE_CENTROIDS)
+	{
+		int root = rintintin_solve_blame(cmd, &memo);
+		if(root < 0) return root;
+	}
 		
 	int ec = rintintin_build_subtree(cmd, &memo);
 	if(ec < 0) return ec;
@@ -132,7 +136,20 @@ rintintin_error_code rintintin_solve(rintintin_command * cmd, struct rintintin_m
 		config.name = cmd->skin.bone_names? cmd->skin.bone_names[j] : "<unnamed>";
 		config.idx = idx;
 		config.parent = cmd->skin.parents[j];
-		rintintin_constrained_result r = rintintin_walk_to_definite_matrix(subtree_j, &cmd->skin.joint_translation_mesh_space[j], &config);
+		config.has_children = memo.counters[j] != 0;
+
+		// An isolated joint -- no parent, no children -- has neither had sibling
+		// partial sums subtracted from it nor a blended weight region shared with
+		// a parent, so its fixed point is trustworthy and its joint origin is
+		// arbitrary. Everything else keeps the artist's placement.
+		int isolated = cmd->skin.parents[j] < 0 && memo.counters[j] == 0;
+		int solved   = (cmd->flags & RINTINTIN_SOLVE_CENTROIDS)
+		            && (isolated || cmd->skin.joint_translation_mesh_space == 0L);
+		rintintin_vec3 const* point = solved
+			? &memo.centroid[j]
+			: &cmd->skin.joint_translation_mesh_space[j];
+
+		rintintin_constrained_result r = rintintin_walk_to_definite_matrix(subtree_j, point, &config);
 	
 		rintintin_solidified as_solid = rintintin_solidify(subtree_j, &r.solution);
 
@@ -179,68 +196,26 @@ static int rintintin_solve_blame(rintintin_command * cmd, struct Memo * memo)
 	rintintin_constrained_config config = rintintin_constrained_default_config(memo->centroid, cmd->skin.joint_translation_mesh_space);
 	config.verbose = false;
 	
+	for(uint32_t idx = 0; idx < N; ++idx)
 	{
-		void * savestate = tmp_begin;
-		ALLOC(liquid_t, subtree, N)
-		ALLOC(dvec4, subtree_centroid, N)
-		memset(subtree, 0, sizeof(*subtree)*N);
-		memset(subtree_centroid, 0, sizeof(*subtree_centroid)*N);
-		tmp_begin = savestate;
+		uint32_t j = scratch->joints? scratch->joints[(N-1)-idx] : (uint32_t)((N-1)-idx);
+		int32_t p = cmd->skin.parents[j];
 		
-		for(uint32_t idx = 0; idx < N; ++idx)
-		{
-			uint32_t j = scratch->joints? scratch->joints[(N-1)-idx] : (uint32_t)((N-1)-idx);
-			int32_t p = cmd->skin.parents[j];
-			
-			tensor_t solid = rintintin_tensor_from_coeff(scratch->latent[j].thick);
-			liquid[j] = (liquid_t){
-				.cubic={.o1=solid.cubic.o1, .o2=solid.cubic.o2},
-				.linear={.coupling=solid.linear.coupling, .o=solid.linear.o},
-				.mass_o=solid.mass_o
-			};
-			
-			liquid_add_eq(&subtree[j], &liquid[j]);
-			if(p >= 0)	liquid_add_eq(&subtree[p], &subtree[j]);
-			
-			config.name = cmd->skin.bone_names? cmd->skin.bone_names[j] : "<unnamed>";
-			config.idx = (int32_t)idx;
-			config.parent = p;
-			rintintin_constrained_result result = rintintin_solve_center(&liquid[j], &centroid[j], &config);
+		tensor_t solid = rintintin_tensor_from_coeff(scratch->latent[j].thick);
+		liquid[j] = (liquid_t){
+			.cubic={.o1=solid.cubic.o1, .o2=solid.cubic.o2},
+			.linear={.coupling=solid.linear.coupling, .o=solid.linear.o},
+			.mass_o=solid.mass_o
+		};
 		
-			if(!result.improved && !result.converged)
-				continue;
-			
-			if(subtree_centroid[j].w != 0)
-			{
-				int break_point = 0;
-				++break_point;
-			}
-						
-			centroid[j] = result.solution;	
-			continue;
-			double mass = subtree[j].mass_o + dot(&subtree[j].cubic.o2, &centroid[j]);
-			double invMass = mass - subtree_centroid[j].w;
-			invMass = invMass? 1.0 / invMass : 0.0;
-			
-			if(p >= 0)
-			{								
-				subtree_centroid[p] = (dvec4){
-					.x=subtree_centroid[p].x + centroid[j].x * mass,
-					.y=subtree_centroid[p].y + centroid[j].y * mass,
-					.z=subtree_centroid[p].z + centroid[j].z * mass,
-					.w=subtree_centroid[p].w + mass,
-				};
-			}
-			
-			if(invMass)
-			{
-				centroid[j] = (dvec3){
-					.x=(centroid[j].x * mass - subtree_centroid[j].x) * invMass,
-					.y=(centroid[j].y * mass - subtree_centroid[j].y) * invMass,
-					.z=(centroid[j].z * mass - subtree_centroid[j].z) * invMass,
-				};
-			}
-		}
+		config.name = cmd->skin.bone_names? cmd->skin.bone_names[j] : "<unnamed>";
+		config.idx = (int32_t)idx;
+		config.parent = p;
+		rintintin_constrained_result result = rintintin_solve_center(&liquid[j], &centroid[j], &config);
+	
+		// Keep the seed when the solve neither converged nor improved on it.
+		if(result.improved || result.converged)
+			centroid[j] = result.solution;
 	}
 	
 	return RINTINTIN_SUCCESS;	

@@ -461,7 +461,12 @@ rintintin_error_code rintintin_end(rintintin_command * cmd)
 		
 	rintintin_stage_3_single_reduction(cmd, scratch);
 	
-	if(scratch->stage_id != STAGE_PARALLEL_REDUCTION)
+	// STAGE_FINISH is accepted so end() can be re-run with different flags without
+	// re-reading the mesh: the reduction above is idempotent, and the solve only
+	// reads scratch->latent / scratch->aabbs. The caller must zero cmd->results
+	// between runs -- the output loop below accumulates into it.
+	if(scratch->stage_id != STAGE_PARALLEL_REDUCTION
+	&& scratch->stage_id != STAGE_FINISH)
 		return RINTINTIN_ERROR_OUT_OF_ORDER;
 	
 	scratch->stage_id = STAGE_FINISH;

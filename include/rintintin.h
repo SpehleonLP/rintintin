@@ -251,7 +251,35 @@ typedef struct rintintin_process_command
     uint64_t scratch_space_byte_length;				///< Size of scratch space in bytes
     uint32_t max_threads;								///< number of threads that will be used.
     uint32_t no_meshes;									///< count of meshes in the mesh array.
+    uint32_t flags;										///< bitwise OR of rintintin_flags.
 } rintintin_command;
+
+/**
+ * @brief Optional behaviour, set in rintintin_command::flags.
+ */
+enum rintintin_flags
+{
+	/**
+	 * @brief Solve each isolated joint's centroid instead of using its joint origin.
+	 *
+	 * The centroid of a non-manifold body is defined as the point that reproduces
+	 * itself under the centroid operator -- a fixed point, reached by iteration
+	 * because the polynomial is degree 6 and too flat for Newton. That definition
+	 * is seed-independent, which the joint origin is not: for an open mesh the
+	 * volume integral closes the surface against whatever point you hand it, so
+	 * the answer moves with the origin the artist happened to leave behind.
+	 *
+	 * Only applied to *isolated* joints -- no parent and no children. A joint with
+	 * children has had sibling partial sums subtracted from it, and a joint with a
+	 * parent shares a blended skin-weight region; either destroys the attractor
+	 * property, for orthogonal reasons. A single-joint skin is isolated by
+	 * construction.
+	 *
+	 * With this set, joint_translation_mesh_space may be NULL: isolated joints are
+	 * seeded from their own AABB centres.
+	 */
+	RINTINTIN_SOLVE_CENTROIDS = 1 << 0,
+};
 
 /**
  * @brief Get required size for mesh processing buffer.
