@@ -541,6 +541,9 @@ static rintintin_error_code rintintin_obb_accum_cb(struct rintintin_vertex const
 
 	int j = rintintin_obb_argmax_joint(vert);
 	if (j < 0) return RINTINTIN_SUCCESS;
+	if ((uint32_t)j >= cmd->no_joints) {
+		return RINTINTIN_ERROR_OUT_OF_BOUNDS;
+	}
 
 	rintintin_obb_accum * a = &scratch[j];
 	double x = vert->position.x;
@@ -560,6 +563,9 @@ static rintintin_error_code rintintin_oriented_bounding_box_cb(struct rintintin_
 
 	int j = rintintin_obb_argmax_joint(vert);
 	if (j < 0) return RINTINTIN_SUCCESS;
+	if ((uint32_t)j >= cmd->no_joints) {
+		return RINTINTIN_ERROR_OUT_OF_BOUNDS;
+	}
 
 	rintintin_inertia_estimation* obb = &cmd->result[j];
 
